@@ -2,8 +2,9 @@ services:
   - type: web
     name: gemini-backend
     runtime: python
-    buildCommand: ""
+    buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
     envVars:
       - key: GEMINI_API_KEY
-        value: ${GEMINI_API_KEY}
+        sync: false
+    pythonVersion: 3.10.13
