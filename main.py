@@ -1,13 +1,13 @@
-
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-import httpx
+from typing import List
+from pydantic import BaseModel
 import base64
+import requests
 import os
 
 app = FastAPI()
 
-# Configurar CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,48 +16,52 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Obtener API Key de variable de entorno
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + GEMINI_API_KEY
+API_KEY = os.getenv("GEMINI_API_KEY")
 
-@app.post("/api/gemini-report")
-async def generate_report(file: UploadFile = File(...)):
-    try:
-        # Leer y codificar la imagen en base64
-        contents = await file.read()
-        base64_image = base64.b64encode(contents).decode("utf-8")
-        image_part = {
-            "inlineData": {
-                "mimeType": file.content_type,
-                "data": base64_image
-            }
+class GeminiResponse(BaseModel):
+    filename: str
+    size_kb: float
+    message: str
+
+@app.post("/api/gemini-report", response_model=List[GeminiResponse])
+async def generate_report(files: List[UploadFile] = File(...)):
+    responses = []
+    for file in files:
+        content = await file.read()
+        image_base64 = base64.b64encode(content).decode("utf-8")
+        prompt = (
+            "Analiza detalladamente esta imagen de un medidor eléctrico. "
+            "Devuelve el análisis dividido en secciones con subtítulos en negrita: "
+            "**Tipo de medidor**, **Cantidad de cables conectados**, **Estado general visible**, "
+            "**Anomalías o intervenciones**, **Conclusión**."
+        )
+        gemini_payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {"text": prompt},
+                        {"inline_data": {"mime_type": "image/jpeg", "data": image_base64}},
+                    ]
+                }
+            ]
         }
-
-        # Enviar solicitud a Gemini
-        headers = {"Content-Type": "application/json"}
-        data = {
-            "contents": [{
-                "parts": [
-                    {"text": "Analiza esta imagen de un medidor eléctrico y proporciona los siguientes datos: tipo de medidor, cantidad de cables conectados, estado general visible y cualquier anomalía o intervención."},
-                    image_part
-                ]
-            }]
-        }
-
-        async with httpx.AsyncClient() as client:
-            response = await client.post(GEMINI_URL, headers=headers, json=data)
-            response.raise_for_status()
-            gemini_data = response.json()
-
-        # Extraer texto del resultado de Gemini
-        output_text = gemini_data["candidates"][0]["content"]["parts"][0]["text"]
-        size_kb = len(contents) / 1024
-
-        return {
-            "filename": file.filename,
-            "size_kb": round(size_kb, 1),
-            "message": output_text
-        }
-
-    except Exception as e:
-        return {"error": str(e)}
+        try:
+            res = requests.post(
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent",
+                headers={"Content-Type": "application/json"},
+                params={"key": API_KEY},
+                json=gemini_payload,
+                timeout=30,
+            )
+            res.raise_for_status()
+            message = res.json()["candidates"][0]["content"]["parts"][0]["text"]
+        except Exception as e:
+            message = f"Error al procesar con Gemini: {str(e)}"
+        responses.append(
+            GeminiResponse(
+                filename=file.filename,
+                size_kb=round(len(content) / 1024, 1),
+                message=message,
+            )
+        )
+    return responses
