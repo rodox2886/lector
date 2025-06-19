@@ -1,10 +1,14 @@
-from fastapi import FastAPI, File, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
-from typing import List
-from pydantic import BaseModel
-import base64
-import requests
+
 import os
+import base64
+from fastapi import FastAPI, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from dotenv import load_dotenv
+import google.generativeai as genai
+
+load_dotenv()
+genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
 app = FastAPI()
 
@@ -16,52 +20,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-API_KEY = os.getenv("GEMINI_API_KEY")
-
-class GeminiResponse(BaseModel):
-    filename: str
-    size_kb: float
-    message: str
-
-@app.post("/api/gemini-report", response_model=List[GeminiResponse])
-async def generate_report(files: List[UploadFile] = File(...)):
-    responses = []
-    for file in files:
-        content = await file.read()
-        image_base64 = base64.b64encode(content).decode("utf-8")
-        prompt = (
-            "Analiza detalladamente esta imagen de un medidor eléctrico. "
-            "Devuelve el análisis dividido en secciones con subtítulos en negrita: "
-            "**Tipo de medidor**, **Cantidad de cables conectados**, **Estado general visible**, "
-            "**Anomalías o intervenciones**, **Conclusión**."
-        )
-        gemini_payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {"text": prompt},
-                        {"inline_data": {"mime_type": "image/jpeg", "data": image_base64}},
-                    ]
-                }
-            ]
+def generate_analysis_prompt(base64_image: str):
+    return [
+        {"type": "text", "text": "Analiza detalladamente esta imagen de un medidor eléctrico. Devuelve el análisis estructurado con estos módulos:"},
+        {"type": "text", "text": "**Tipo de medidor**
+**Cantidad de cables conectados**
+**Estado general visible**
+**Anomalías o intervenciones**
+**Conclusión**"},
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/jpeg;base64,{base64_image}",
+                "detail": "high"
+            }
         }
-        try:
-            res = requests.post(
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent",
-                headers={"Content-Type": "application/json"},
-                params={"key": API_KEY},
-                json=gemini_payload,
-                timeout=30,
-            )
-            res.raise_for_status()
-            message = res.json()["candidates"][0]["content"]["parts"][0]["text"]
-        except Exception as e:
-            message = f"Error al procesar con Gemini: {str(e)}"
-        responses.append(
-            GeminiResponse(
-                filename=file.filename,
-                size_kb=round(len(content) / 1024, 1),
-                message=message,
-            )
-        )
-    return responses
+    ]
+
+@app.post("/api/gemini-report")
+async def generate_report(file: UploadFile = File(...)):
+    try:
+        image_data = await file.read()
+        base64_image = base64.b64encode(image_data).decode("utf-8")
+        model = genai.GenerativeModel("gemini-pro-vision")
+        response = model.generate_content(generate_analysis_prompt(base64_image))
+        return {
+            "filename": file.filename,
+            "size_kb": round(len(image_data) / 1024, 1),
+            "message": response.text
+        }
+    except Exception as e:
+        return {"error": str(e)}
