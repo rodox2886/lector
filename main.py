@@ -19,6 +19,8 @@ app.add_middleware(
 # Obtener API Key de la variable de entorno. Asegúrate de que GEMINI_API_KEY esté configurada en tu entorno de Render.
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
+    # Retorna un error si la API Key no está configurada
+    # En un entorno de producción, considera un mensaje menos explícito por seguridad
     raise ValueError("La variable de entorno GEMINI_API_KEY no está configurada.")
 
 # URL del endpoint de Gemini 1.5 Flash
@@ -31,7 +33,8 @@ async def generate_report(files: List[UploadFile] = File(...)):
     y retornar un informe consolidado.
     """
     if not files:
-        raise HTTPException(status_code=400, detail="No se han proporcionado archivos.")
+        # Retorna un error si no se proporcionan archivos
+        return {"error": "No se han proporcionado archivos para el análisis.", "message": "No se han proporcionado archivos para el análisis."}
 
     image_parts = []
     total_size_kb = 0
@@ -39,18 +42,22 @@ async def generate_report(files: List[UploadFile] = File(...)):
 
     # Procesar cada archivo de imagen
     for file in files:
-        contents = await file.read()
-        base64_image = base64.b64encode(contents).decode("utf-8")
-        image_parts.append(
-            {
-                "inlineData": {
-                    "mimeType": file.content_type,
-                    "data": base64_image
+        try:
+            contents = await file.read()
+            base64_image = base64.b64encode(contents).decode("utf-8")
+            image_parts.append(
+                {
+                    "inlineData": {
+                        "mimeType": file.content_type,
+                        "data": base64_image
+                    }
                 }
-            }
-        )
-        total_size_kb += len(contents) / 1024
-        filenames.append(file.filename)
+            )
+            total_size_kb += len(contents) / 1024
+            filenames.append(file.filename)
+        except Exception as e:
+            # Captura errores al leer o procesar un archivo individual
+            return {"error": f"Error al procesar el archivo {file.filename}: {e}", "message": f"Error al procesar el archivo {file.filename}: {e}"}
 
     # El prompt se ajusta para indicar que hay múltiples imágenes del mismo medidor
     prompt_text = "Analiza estas imágenes de un medidor eléctrico (pueden ser múltiples vistas del mismo medidor) y proporciona los siguientes datos en un informe conciso: tipo de medidor, cantidad de cables conectados, estado general visible, cualquier anomalía o intervención detectada, y una conclusión sobre la lectura o el estado general del medidor basándose en todas las imágenes. Enumera los hallazgos claramente."
@@ -80,7 +87,7 @@ async def generate_report(files: List[UploadFile] = File(...)):
         if gemini_data and "candidates" in gemini_data and gemini_data["candidates"]:
             output_text = gemini_data["candidates"][0]["content"]["parts"][0]["text"]
         else:
-            output_text = "Gemini no pudo generar un informe con las imágenes proporcionadas."
+            output_text = "Gemini no pudo generar un informe con las imágenes proporcionadas o la respuesta de Gemini fue inesperada."
 
         return {
             "filenames": filenames,
@@ -89,12 +96,18 @@ async def generate_report(files: List[UploadFile] = File(...)):
         }
 
     except httpx.RequestError as e:
-        # Manejo de errores de conexión o solicitud
-        raise HTTPException(status_code=500, detail=f"Error de conexión con la API de Gemini: {e}")
+        # Manejo de errores de conexión o solicitud con la API de Gemini
+        error_msg = f"Error de conexión con la API de Gemini: {e}"
+        return {"error": error_msg, "message": error_msg}
     except httpx.HTTPStatusError as e:
         # Manejo de errores de estado HTTP (ej. 400, 500 del lado de Gemini)
-        error_detail = e.response.json() if e.response.content else str(e)
-        raise HTTPException(status_code=e.response.status_code, detail=f"Error de la API de Gemini: {error_detail}")
+        try:
+            error_detail = e.response.json()
+            error_msg = f"Error de la API de Gemini ({e.response.status_code}): {error_detail.get('error', {}).get('message', 'Mensaje de error no disponible')}"
+        except ValueError:
+            error_msg = f"Error de la API de Gemini ({e.response.status_code}): {e.response.text}"
+        return {"error": error_msg, "message": error_msg}
     except Exception as e:
         # Manejo de cualquier otra excepción inesperada
-        raise HTTPException(status_code=500, detail=f"Ocurrió un error inesperado: {e}")
+        error_msg = f"Ocurrió un error inesperado en el servidor: {e}"
+        return {"error": error_msg, "message": error_msg}
