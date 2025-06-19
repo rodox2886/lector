@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import base64
 import os
-import json # Importar la librería json
+import json
 from typing import List
 
 app = FastAPI()
@@ -11,10 +11,10 @@ app = FastAPI()
 # Configurar CORS para permitir solicitudes desde cualquier origen
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Permite todos los orígenes
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Permite todos los métodos (GET, POST, etc.)
-    allow_headers=["*"],  # Permite todos los encabezados
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Obtener API Key de la variable de entorno. Asegúrate de que GEMINI_API_KEY esté configurada en tu entorno de Render.
@@ -55,13 +55,13 @@ async def generate_report(files: List[UploadFile] = File(...)):
         except Exception as e:
             return {"error": f"Error al procesar el archivo {file.filename}: {e}", "message": f"Error al procesar el archivo {file.filename}: {e}"}
 
-    # El prompt se ajusta para solicitar un informe estructurado en JSON
-    # Se especifica que la respuesta debe ser SOLO JSON y se incluye un ejemplo
+    # El prompt se ajusta para solicitar un informe estructurado en JSON, incluyendo el número del medidor
     prompt_text = (
         "Analiza estas imágenes de un medidor eléctrico (pueden ser múltiples vistas del mismo medidor) "
         "y proporciona un informe detallado en formato JSON. Tu respuesta debe ser SOLO el objeto JSON, "
         "sin preámbulos ni texto adicional. El informe debe incluir los siguientes campos: "
         "'tipoMedidor', 'cablesConectados', 'estadoGeneralVisible', 'anomaliasDetectadas' (un array de strings, vacío si no hay), "
+        "'numeroMedidor' (el número de medidor visible en la imagen, si aplica, si no es visible, un string vacío), "
         "y 'conclusionGeneral'.\n\n"
         "Ejemplo de formato JSON esperado:\n"
         "```json\n"
@@ -70,14 +70,14 @@ async def generate_report(files: List[UploadFile] = File(...)):
         "  \"cablesConectados\": 3,\n"
         "  \"estadoGeneralVisible\": \"Buen estado\",\n"
         "  \"anomaliasDetectadas\": [\"Cable suelto\", \"Sellos rotos\"],\n"
+        "  \"numeroMedidor\": \"12345678\",\n"
         "  \"conclusionGeneral\": \"El medidor parece funcionar correctamente, pero requiere una inspección de cables.\"\n"
         "}\n"
         "```\n"
         "Genera el informe JSON ahora:"
     )
 
-    # Definición del esquema JSON esperado para la respuesta de Gemini (esto es para la guía interna de Gemini,
-    # pero la extracción robusta es nuestra principal defensa contra respuestas no conformes).
+    # Definición del esquema JSON esperado para la respuesta de Gemini
     response_schema = {
         "type": "OBJECT",
         "properties": {
@@ -89,9 +89,10 @@ async def generate_report(files: List[UploadFile] = File(...)):
                 "items": {"type": "STRING"},
                 "description": "Lista de cualquier anomalía, daño, manipulación o intervención detectada."
             },
+            "numeroMedidor": {"type": "STRING", "description": "Número de medidor visible en las imágenes. Cadena vacía si no es visible."},
             "conclusionGeneral": {"type": "STRING", "description": "Conclusión concisa sobre la lectura o el estado general del medidor."}
         },
-        "required": ["tipoMedidor", "cablesConectados", "estadoGeneralVisible", "anomaliasDetectadas", "conclusionGeneral"]
+        "required": ["tipoMedidor", "cablesConectados", "estadoGeneralVisible", "anomaliasDetectadas", "numeroMedidor", "conclusionGeneral"]
     }
 
     # Preparar el contenido para la solicitud a Gemini, incluyendo el prompt y las imágenes
@@ -103,7 +104,7 @@ async def generate_report(files: List[UploadFile] = File(...)):
             "parts": gemini_contents
         }],
         "generationConfig": {
-            "responseMimeType": "application/json", # Intentamos forzar JSON
+            "responseMimeType": "application/json",
             "responseSchema": response_schema
         }
     }
@@ -111,27 +112,22 @@ async def generate_report(files: List[UploadFile] = File(...)):
     headers = {"Content-Type": "application/json"}
 
     try:
-        # Aumentar el tiempo de espera para solicitudes a Gemini
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(GEMINI_URL, headers=headers, json=data)
             response.raise_for_status()
 
             gemini_data = response.json()
 
-        # Extraer el texto generado por Gemini
         if gemini_data and "candidates" in gemini_data and gemini_data["candidates"]:
             raw_gemini_text = gemini_data["candidates"][0]["content"]["parts"][0]["text"]
             
-            # Intentar extraer el JSON de la cadena completa
-            # Buscar el primer '{' y el último '}'
             start_idx = raw_gemini_text.find('{')
             end_idx = raw_gemini_text.rfind('}')
 
             if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
                 json_string = raw_gemini_text[start_idx : end_idx + 1]
-                output_report = json.loads(json_string) # Parsear la cadena JSON a un objeto Python
+                output_report = json.loads(json_string)
             else:
-                # Si no se encuentra un JSON válido, reportar un error
                 error_msg = "La respuesta de Gemini no contiene un JSON válido. Respuesta cruda: " + raw_gemini_text
                 return {"error": error_msg, "message": error_msg}
         else:
@@ -140,7 +136,7 @@ async def generate_report(files: List[UploadFile] = File(...)):
         return {
             "filenames": filenames,
             "total_size_kb": round(total_size_kb, 1),
-            "message": output_report # Ahora 'message' contiene el objeto JSON del informe
+            "message": output_report
         }
 
     except httpx.RequestError as e:
@@ -154,10 +150,7 @@ async def generate_report(files: List[UploadFile] = File(...)):
             error_msg = f"Error de la API de Gemini ({e.response.status_code}): {e.response.text}"
         return {"error": error_msg, "message": error_msg}
     except json.JSONDecodeError as e:
-        # Este error ahora es menos probable si la extracción robusta funciona,
-        # pero es bueno mantenerlo.
         error_msg = f"Error al parsear el JSON extraído de Gemini: {e}. Asegúrate de que el formato JSON sea válido."
-        # Aquí sería útil loggear `raw_gemini_text` o `json_string` para depuración
         return {"error": error_msg, "message": error_msg}
     except Exception as e:
         error_msg = f"Ocurrió un error inesperado en el servidor: {e}"
