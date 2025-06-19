@@ -1,73 +1,73 @@
-
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.requests import Request
+from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 import os
+import base64
 import httpx
 
 load_dotenv()
 
 app = FastAPI()
 
-# Permitir CORS desde cualquier origen
+# Habilitar CORS para permitir peticiones desde GitHub Pages
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Podés restringir esto a tu dominio GitHub si querés
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
 @app.post("/api/gemini-report")
-async def generate_report(files: list[UploadFile] = File(...)):
-    import base64
-    import json
-
+async def generate_gemini_report(file: UploadFile = File(...)):
     try:
-        encoded_images = []
-        for file in files:
-            content = await file.read()
-            encoded = base64.b64encode(content).decode("utf-8")
-            encoded_images.append(f"data:{file.content_type};base64,{encoded}")
+        if not GEMINI_API_KEY:
+            raise HTTPException(status_code=500, detail="GEMINI_API_KEY no configurada")
 
-        prompt = (
-            "Analiza las siguientes imágenes de un medidor eléctrico. "
-            "Devuelve un informe con los siguientes campos separados por secciones claras:\n"
-            "- Estado general\n- Observaciones visuales\n- Anomalías detectadas\n- Acciones observadas\n- Resumen final\n"
-            "Responde en español de forma clara y profesional.\n"
-        )
+        image_bytes = await file.read()
+        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
 
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise HTTPException(status_code=500, detail="API Key no configurada")
-
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        body = {
-            "contents": [{
-                "parts": [
-                    {"text": prompt},
-                    *[
-                        {"inline_data": {"mime_type": file.content_type, "data": base64.b64encode(await file.read()).decode()}}
-                        for file in files
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {
+                            "inline_data": {
+                                "mime_type": file.content_type,
+                                "data": image_base64
+                            }
+                        },
+                        {
+                            "text": "Analiza esta imagen de un medidor eléctrico y genera un resumen con estos campos: Estado general, Observaciones visuales, Anomalías detectadas, Acciones observadas y Resumen del informe."
+                        }
                     ]
-                ]
-            }]
+                }
+            ]
+        }
+
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": GEMINI_API_KEY
         }
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                "https://generativelanguage.googleapis.com/v1/models/gemini-pro-vision:generateContent",
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent",
                 headers=headers,
-                json=body
+                json=payload
             )
 
         if response.status_code != 200:
-            raise HTTPException(status_code=500, detail="Error al llamar a la API de Gemini")
+            raise HTTPException(status_code=response.status_code, detail=response.text)
 
-        result = response.json()
-        text = result["candidates"][0]["content"]["parts"][0]["text"]
-        return {"response": text}
+        gemini_data = response.json()
+        text_parts = [part.get("text", "") for part in gemini_data.get("candidates", [])[0].get("content", {}).get("parts", [])]
+        result_text = "\n".join(text_parts)
+
+        return {"result": result_text}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al procesar: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
