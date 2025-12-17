@@ -22,8 +22,9 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("La variable de entorno GEMINI_API_KEY no está configurada.")
 
-# CAMBIA TU LÍNEA DE URL POR ESTA EXACTA:
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-001:generateContent?key=" + GEMINI_API_KEY
+# CÓDIGO CORREGIDO PARA main.py
+# Usamos la versión estable 'v1' que es más segura y el nombre estándar del modelo
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=" + GEMINI_API_KEY
 
 @app.post("/api/gemini-report")
 async def generate_report(files: List[UploadFile] = File(...)):
