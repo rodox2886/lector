@@ -104,10 +104,7 @@ async def generate_report(files: List[UploadFile] = File(...)):
         "contents": [{
             "parts": gemini_contents
         }],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "responseSchema": response_schema
-        }
+        
     }
 
     headers = {"Content-Type": "application/json"}
