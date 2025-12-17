@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analizador de Medidores con IA</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background-color: #f5f5f5; }
+        .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #2c3e50; text-align: center; }
+        .upload-section { border: 2px dashed #3498db; padding: 40px; text-align: center; margin: 20px 0; border-radius: 5px; cursor: pointer; transition: background 0.3s; }
+        .upload-section:hover { background-color: #ecf0f1; }
+        button { background-color: #3498db; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 16px; width: 100%; }
+        button:hover { background-color: #2980b9; }
+        button:disabled { background-color: #bdc3c7; cursor: not-allowed; }
+        #result { margin-top: 20px; display: none; }
+        .card { border: 1px solid #ddd; padding: 15px; border-radius: 5px; margin-bottom: 10px; background: #fff; }
+        .card-title { font-weight: bold; color: #7f8c8d; font-size: 0.9em; }
+        .card-value { font-size: 1.1em; color: #2c3e50; margin-top: 5px; }
+        .loading { text-align: center; display: none; color: #7f8c8d; }
+        .error { color: #e74c3c; padding: 10px; background: #fadbd8; border-radius: 5px; display: none; margin-top: 10px; }
+        ul { margin: 5px 0; padding-left: 20px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>⚡ Inspector de Medidores</h1>
+    <p style="text-align: center; color: #7f8c8d;">Sube fotos del medidor para analizarlas con Gemini 1.5</p>
+
+    <div class="upload-section" onclick="document.getElementById('fileInput').click()">
+        <p>📸 Haz clic aquí para seleccionar imágenes</p>
+        <input type="file" id="fileInput" multiple accept="image/*" style="display: none" onchange="updateFileName()">
+        <p id="fileName" style="font-size: 0.9em; color: #27ae60;"></p>
+    </div>
+
+    <button id="analyzeBtn" onclick="analyzeImages()">Analizar Imágenes</button>
+
+    <div id="loading" class="loading">
+        <p>⏳ Analizando con IA... esto puede tomar unos segundos.</p>
+    </div>
+
+    <div id="errorMessage" class="error"></div>
+
+    <div id="result">
+        <h2>📊 Reporte del Análisis</h2>
+        
+        <div class="card">
+            <div class="card-title">Número de Medidor</div>
+            <div class="card-value" id="resNumero">--</div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Tipo de Medidor</div>
+            <div class="card-value" id="resTipo">--</div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Estado General</div>
+            <div class="card-value" id="resEstado">--</div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Cables Conectados</div>
+            <div class="card-value" id="resCables">--</div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Anomalías Detectadas</div>
+            <div class="card-value">
+                <ul id="resAnomalias"></ul>
+            </div>
+        </div>
+
+        <div class="card" style="border-left: 5px solid #3498db;">
+            <div class="card-title">Conclusión</div>
+            <div class="card-value" id="resConclusion">--</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ==========================================
+    // CONFIGURACIÓN: PEGA AQUÍ TU URL DE RENDER
+    // ==========================================
+    const BACKEND_URL = "https://TU-APP-EN-RENDER.onrender.com"; 
+    // Ejemplo: const BACKEND_URL = "https://gemini-backend-xyz.onrender.com";
+
+    function updateFileName() {
+        const input = document.getElementById('fileInput');
+        const nameDisplay = document.getElementById('fileName');
+        if (input.files.length > 0) {
+            nameDisplay.textContent = `${input.files.length} archivo(s) seleccionado(s)`;
+        } else {
+            nameDisplay.textContent = "";
+        }
+    }
+
+    async function analyzeImages() {
+        const input = document.getElementById('fileInput');
+        const btn = document.getElementById('analyzeBtn');
+        const loading = document.getElementById('loading');
+        const resultDiv = document.getElementById('result');
+        const errorDiv = document.getElementById('errorMessage');
+
+        // Validaciones simples
+        if (input.files.length === 0) {
+            alert("Por favor selecciona al menos una imagen.");
+            return;
+        }
+
+        if (BACKEND_URL.includes("TU-APP-EN-RENDER")) {
+            alert("⚠️ ¡Falta configurar la URL! Abre el archivo index.html y pon la URL de tu servidor en Render en la línea 24.");
+            return;
+        }
+
+        // Preparar UI
+        btn.disabled = true;
+        loading.style.display = 'block';
+        resultDiv.style.display = 'none';
+        errorDiv.style.display = 'none';
+
+        // Preparar datos para enviar
+        const formData = new FormData();
+        // 'files' debe coincidir con el nombre del parámetro en tu main.py: generate_report(files: List[UploadFile]...)
+        for (const file of input.files) {
+            formData.append('files', file);
+        }
+
+        try {
+            // Petición al Backend
+            // Usamos el endpoint definido en main.py: /api/gemini-report
+            const response = await fetch(`${BACKEND_URL}/api/gemini-report`, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) {
+                throw new Error(`Error del servidor: ${response.status}`);
+            }
+
+            const data = await response.json();
+            
+            // Si el backend devuelve un error lógico
+            if (data.error) {
+                throw new Error(data.message || data.error);
+            }
+
+            // Mostrar resultados
+            // La estructura de tu respuesta es: { message: { tipoMedidor: "...", ... } }
+            const reporte = data.message;
+
+            document.getElementById('resNumero').textContent = reporte.numeroMedidor || "No visible";
+            document.getElementById('resTipo').textContent = reporte.tipoMedidor;
+            document.getElementById('resEstado').textContent = reporte.estadoGeneralVisible;
+            document.getElementById('resCables').textContent = reporte.cablesConectados;
+            document.getElementById('resConclusion').textContent = reporte.conclusionGeneral;
+
+            // Llenar lista de anomalías
+            const listaAnomalias = document.getElementById('resAnomalias');
+            listaAnomalias.innerHTML = "";
+            if (reporte.anomaliasDetectadas && reporte.anomaliasDetectadas.length > 0) {
+                reporte.anomaliasDetectadas.forEach(item => {
+                    const li = document.createElement('li');
+                    li.textContent = item;
+                    li.style.color = "#e74c3c"; // Rojo para resaltar problemas
+                    listaAnomalias.appendChild(li);
+                });
+            } else {
+                const li = document.createElement('li');
+                li.textContent = "Ninguna detectada";
+                li.style.color = "#27ae60"; // Verde si todo está bien
+                listaAnomalias.appendChild(li);
+            }
+
+            resultDiv.style.display = 'block';
+
+        } catch (error) {
+            console.error(error);
+            errorDiv.textContent = `Ocurrió un error: ${error.message}`;
+            errorDiv.style.display = 'block';
+        } finally {
+            btn.disabled = false;
+            loading.style.display = 'none';
+        }
+    }
+</script>
+
+</body>
+</html>
