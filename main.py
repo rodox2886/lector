@@ -22,9 +22,8 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("La variable de entorno GEMINI_API_KEY no está configurada.")
 
-
-# CAMBIO AQUÍ: Usamos 'gemini-1.5-flash-latest' que suele ser más seguro para evitar el error 404
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=" + GEMINI_API_KEY
+# CAMBIA TU LÍNEA DE URL POR ESTA EXACTA:
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-001:generateContent?key=" + GEMINI_API_KEY
 
 @app.post("/api/gemini-report")
 async def generate_report(files: List[UploadFile] = File(...)):
